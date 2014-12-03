@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<classpath>
+	<classpathentry kind="src" path="src"/>
+	<classpathentry kind="lib" path="libs/affinity-2.1.2.jar"/>
+	<classpathentry kind="lib" path="libs/annotations-9.0.jar"/>
+	<classpathentry kind="lib" path="libs/asm-all-4.1.jar"/>
+	<classpathentry kind="lib" path="libs/chronicle-3.2.5.jar" sourcepath="D:/Program Files/Java/repo/repos/net/openhft/chronicle/3.2.5/chronicle-3.2.5-sources.jar"/>
+	<classpathentry kind="lib" path="libs/compiler-2.2.0.jar"/>
+	<classpathentry kind="lib" path="libs/jna-4.1.0.jar"/>
+	<classpathentry kind="lib" path="libs/jna-platform-4.1.0.jar"/>
+	<classpathentry kind="lib" path="libs/kilim.jar"/>
+	<classpathentry kind="lib" path="libs/lang-6.4.10.jar" sourcepath="D:/Program Files/Java/repo/repos/net/openhft/lang/6.4.10/lang-6.4.10-sources.jar"/>
+	<classpathentry kind="lib" path="libs/slf4j-api-1.7.6.jar"/>
+	<classpathentry kind="con" path="org.eclipse.jdt.launching.JRE_CONTAINER/org.eclipse.jdt.internal.debug.ui.launcher.StandardVMType/JavaSE-1.7"/>
+	<classpathentry kind="con" path="org.eclipse.jdt.junit.JUNIT_CONTAINER/4"/>
+	<classpathentry kind="output" path="bin"/>
+</classpath>
