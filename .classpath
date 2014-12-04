@@ -11,7 +11,7 @@
 	<classpathentry kind="lib" path="libs/kilim.jar"/>
 	<classpathentry kind="lib" path="libs/lang-6.4.10.jar" sourcepath="D:/Program Files/Java/repo/repos/net/openhft/lang/6.4.10/lang-6.4.10-sources.jar"/>
 	<classpathentry kind="lib" path="libs/slf4j-api-1.7.6.jar"/>
-	<classpathentry kind="con" path="org.eclipse.jdt.launching.JRE_CONTAINER/org.eclipse.jdt.internal.debug.ui.launcher.StandardVMType/JavaSE-1.7"/>
 	<classpathentry kind="con" path="org.eclipse.jdt.junit.JUNIT_CONTAINER/4"/>
+	<classpathentry kind="con" path="org.eclipse.jdt.launching.JRE_CONTAINER/org.eclipse.jdt.internal.debug.ui.launcher.StandardVMType/java-7-openjdk-amd64"/>
 	<classpathentry kind="output" path="bin"/>
 </classpath>

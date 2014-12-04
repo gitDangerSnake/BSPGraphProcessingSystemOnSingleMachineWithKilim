@@ -14,8 +14,12 @@ import java.util.StringTokenizer;
 import java.util.logging.Logger;
 import java.util.regex.Pattern;
 
+import edu.hnu.bgpsa.app.component.ComponentHandler;
+import edu.hnu.bgpsa.app.component.EmptyType;
+import edu.hnu.bgpsa.graph.Exception.WrongNumberOfWorkersException;
+import edu.hnu.bgpsa.graph.framework.Handler;
 import edu.hnu.cg.graph.BytesToValueConverter.BytesToValueConverter;
-import edu.hnu.cg.graph.BytesToValueConverter.MsgBytesTovalueConverter;
+import edu.hnu.cg.graph.BytesToValueConverter.IntConverter;
 import edu.hnu.cg.graph.config.Configure;
 import edu.hnu.cg.graph.preprocessing.EdgeProcessor;
 import edu.hnu.cg.graph.preprocessing.VertexProcessor;
@@ -28,13 +32,22 @@ public class Graph<VertexValueType, EdgeValueType, MsgValueType> {
 	private static Logger logger;
 	private static Configure config = Configure.getConfigure();
 
+	public static String baseFilePath;
+	public static String format;
+	public static String adjDataPath;
+	public static int nvertices;
+	public static int MAXID;
+
+	public static int nworkers;
+	public static int cachelineSize;
+	public static boolean cacheLineEnabled;
+	public static int vertexIdBytesLength;
+	public static int lengthBytesLength;
+	public static int degreeBytesLength;
+	public static int valueOffsetWidth;
+
 	public static byte[] cachelineTemplate;
 	public static int[] lengthsOfWorkerMsgsPool;
-
-	private static int valueOffsetWidth;
-	private static int vertexIdBytesLength;
-	private static int lengthBytesLength;
-	private static int degreeBytesLength;
 
 	private static final String vertexToEdgeSeparate = ":";
 	private static final String idToValueSeparate = ",";
@@ -42,15 +55,37 @@ public class Graph<VertexValueType, EdgeValueType, MsgValueType> {
 
 	static {
 
+		// get configurations
+		baseFilePath = config.getStringValue("baseFilePath");
+		format = config.getStringValue("format");
+		adjDataPath = config.getStringValue("CSRDataPath");
+		nvertices = config.getInt("nvertices");
+		MAXID = config.getInt("maxId");
+		nworkers = config.getInt("nworkers");
+		if ((nworkers & (nworkers - 1)) != 0)
+			try {
+				throw new WrongNumberOfWorkersException(
+						"The number of workers should be the 2^N...");
+			} catch (WrongNumberOfWorkersException e) {
+				e.printStackTrace();
+			}
+
+		cachelineSize = config.getInt("cachelineSize");
+		String str = config.getStringValue("cacheLineEnabled");
+		if (str.equals("true"))
+			cacheLineEnabled = true;
 		vertexIdBytesLength = config.getInt("vertexIdBytesLength");
 		degreeBytesLength = config.getInt("degreeBytesLength");
 		valueOffsetWidth = config.getInt("valueOffsetWidth");
 		lengthBytesLength = config.getInt("lengthBytesLength");
 
 		cachelineTemplate = new byte[config.getInt("cachelineSize")];
-		lengthsOfWorkerMsgsPool = new int[config.getInt("workers")];
 
 		logger = Logger.getLogger("Graph PreProcessing");
+	}
+	
+	public static int getMaxID(){
+		return MAXID;
 	}
 
 	/**
@@ -64,10 +99,7 @@ public class Graph<VertexValueType, EdgeValueType, MsgValueType> {
 	 * 图的文件名
 	 */
 	private String graphFilename;
-	/*
-	 * 文件内容的格式
-	 */
-	private graphFormat format;
+
 	/*
 	 * 图的边的条数
 	 */
@@ -97,10 +129,7 @@ public class Graph<VertexValueType, EdgeValueType, MsgValueType> {
 	 */
 	private BytesToValueConverter<VertexValueType> verterxValueTypeBytesToValueConverter;
 
-	/*
-	 * 数据转换器：字节数组转换为数据MsgValueType
-	 */
-	private MsgBytesTovalueConverter<MsgValueType> msgValueTypeBytesToValueConverter;
+	private Handler<VertexValueType, EdgeValueType, MsgValueType> handler;
 
 	/*
 	 * 默认的VertexValueType字节缓存数组
@@ -111,84 +140,54 @@ public class Graph<VertexValueType, EdgeValueType, MsgValueType> {
 	 * 默认的EdgeValueType字节缓存数组
 	 */
 	private byte[] edgeValueTemplate;
-	/*
-	 * 默认的MsgValueType字节缓存数组
-	 */
-	private byte[] msgTemplate;
+	
 
 	private DataOutputStream shovelWriter;
 	private DataOutputStream shovelValueWriter;
 
-	private DataOutputStream graphDataStream;
 	private DataOutputStream graphDataValueStream;
-	private DataOutputStream graphDataIndexStream;
 
 	public Graph(
-			String graphFilename,
-			String format,
-			long numEdges,
-			long numVertices,
 			VertexProcessor<VertexValueType> vertexProcessor,
 			EdgeProcessor<EdgeValueType> edgeProcessor,
 			BytesToValueConverter<EdgeValueType> edgeValueTypeBytesToValueConverter,
 			BytesToValueConverter<VertexValueType> verterxValueTypeBytesToValueConverter,
-			MsgBytesTovalueConverter<MsgValueType> msgValueTypeBytesToValueConverter,
 			byte[] vertexValueTemplate, byte[] edgeValueTemplate,
-			byte[] msgTemplate, DataOutputStream shovelWriter,
+			DataOutputStream shovelWriter,
 			DataOutputStream shovelValueWriter,
-			DataOutputStream graphDataStream,
-			DataOutputStream graphDataValueStream) {
+			DataOutputStream graphDataValueStream,
+			Handler<VertexValueType, EdgeValueType, MsgValueType> handler) {
 
-		this.graphFilename = graphFilename;
-
-		if (format.toLowerCase().equals("edgelist"))
-			this.format = graphFormat.EDGELIST;
-		else if (format.toLowerCase().equals("adjacency"))
-			this.format = graphFormat.ADJACENCY;
-
-		this.numEdges = numEdges;
-		this.numVertices = numVertices;
-
+		this.graphFilename = baseFilePath;
+		
 		this.vertexProcessor = vertexProcessor;
 		this.edgeProcessor = edgeProcessor;
 		this.edgeValueTypeBytesToValueConverter = edgeValueTypeBytesToValueConverter;
 		this.verterxValueTypeBytesToValueConverter = verterxValueTypeBytesToValueConverter;
-		this.msgValueTypeBytesToValueConverter = msgValueTypeBytesToValueConverter;
 
 		this.vertexValueTemplate = vertexValueTemplate;
 		this.edgeValueTemplate = edgeValueTemplate;
-		this.msgTemplate = msgTemplate;
 		this.shovelWriter = shovelWriter;
 		this.shovelValueWriter = shovelValueWriter;
-		this.graphDataStream = graphDataStream;
 		this.graphDataValueStream = graphDataValueStream;
+		
+		this.handler = handler;
 	}
 
 	public Graph(
-			String graphFilename,
-			String format,
-			long numEdges,
-			long numVertices,
 			VertexProcessor<VertexValueType> vertexProcessor,
 			EdgeProcessor<EdgeValueType> edgeProcessor,
 			BytesToValueConverter<EdgeValueType> edgeValueTypeBytesToValueConverter,
 			BytesToValueConverter<VertexValueType> verterxValueTypeBytesToValueConverter,
-			MsgBytesTovalueConverter<MsgValueType> msgValueTypeBytesToValueConverter)
+			Handler<VertexValueType, EdgeValueType, MsgValueType> handler)
 			throws FileNotFoundException {
-		this.graphFilename = graphFilename;
+		this.graphFilename = baseFilePath;
 
-		if (format.toLowerCase().equals("edgelist"))
-			this.format = graphFormat.EDGELIST;
-		else if (format.toLowerCase().equals("adjacency"))
-			this.format = graphFormat.ADJACENCY;
-
-		this.numEdges = numEdges;
-		this.numVertices = numVertices;
+		this.numVertices = nvertices;
 		this.vertexProcessor = vertexProcessor;
 		this.edgeProcessor = edgeProcessor;
 		this.edgeValueTypeBytesToValueConverter = edgeValueTypeBytesToValueConverter;
 		this.verterxValueTypeBytesToValueConverter = verterxValueTypeBytesToValueConverter;
-		this.msgValueTypeBytesToValueConverter = msgValueTypeBytesToValueConverter;
 
 		this.shovelWriter = new DataOutputStream(new BufferedOutputStream(
 				new FileOutputStream(Filename.shovelFilename(graphFilename))));
@@ -196,8 +195,6 @@ public class Graph<VertexValueType, EdgeValueType, MsgValueType> {
 				new FileOutputStream(
 						Filename.shovelValueFilename(graphFilename))));
 
-		this.graphDataStream = new DataOutputStream(new BufferedOutputStream(
-				new FileOutputStream(Filename.adjFilename(graphFilename))));
 		this.graphDataValueStream = new DataOutputStream(
 				new BufferedOutputStream(new FileOutputStream(
 						Filename.vertexValueFilename(graphFilename))));
@@ -215,37 +212,25 @@ public class Graph<VertexValueType, EdgeValueType, MsgValueType> {
 		} else {
 			vertexValueTemplate = new byte[0];
 		}
-
-		if (msgValueTypeBytesToValueConverter != null) {
-			msgTemplate = new byte[msgValueTypeBytesToValueConverter.sizeOf()];
-		} else {
-			msgTemplate = new byte[0];
-		}
+		
+		this.handler = handler;
 
 	}
 
 	public Graph(
-			String filename,
-			String _format,
 			BytesToValueConverter<EdgeValueType> _edgeValueTypeBytesToValueConverter,
 			BytesToValueConverter<VertexValueType> _verterxValueTypeBytesToValueConverter,
-			MsgBytesTovalueConverter<MsgValueType> _msgValueTypeBytesToValueConverter,
 			VertexProcessor<VertexValueType> _vertexProcessor,
-			EdgeProcessor<EdgeValueType> _edgeProcessor)
+			EdgeProcessor<EdgeValueType> _edgeProcessor,
+			Handler<VertexValueType, EdgeValueType, MsgValueType> handler)
 			throws FileNotFoundException {
 
-		graphFilename = filename;
-
-		if (_format.toLowerCase().equals("edgelist"))
-			format = graphFormat.EDGELIST;
-		else if (_format.toLowerCase().equals("adjacency"))
-			format = graphFormat.ADJACENCY;
+		graphFilename = baseFilePath;
 
 		vertexProcessor = _vertexProcessor;
 		edgeProcessor = _edgeProcessor;
 		edgeValueTypeBytesToValueConverter = _edgeValueTypeBytesToValueConverter;
 		verterxValueTypeBytesToValueConverter = _verterxValueTypeBytesToValueConverter;
-		msgValueTypeBytesToValueConverter = _msgValueTypeBytesToValueConverter;
 
 		this.shovelWriter = new DataOutputStream(new BufferedOutputStream(
 				new FileOutputStream(Filename.shovelFilename(graphFilename))));
@@ -253,8 +238,6 @@ public class Graph<VertexValueType, EdgeValueType, MsgValueType> {
 				new FileOutputStream(
 						Filename.shovelValueFilename(graphFilename))));
 
-		this.graphDataStream = new DataOutputStream(new BufferedOutputStream(
-				new FileOutputStream(Filename.adjFilename(graphFilename))));
 		this.graphDataValueStream = new DataOutputStream(
 				new BufferedOutputStream(new FileOutputStream(
 						Filename.vertexValueFilename(graphFilename))));
@@ -272,12 +255,8 @@ public class Graph<VertexValueType, EdgeValueType, MsgValueType> {
 		} else {
 			vertexValueTemplate = new byte[0];
 		}
-
-		if (msgValueTypeBytesToValueConverter != null) {
-			msgTemplate = new byte[msgValueTypeBytesToValueConverter.sizeOf()];
-		} else {
-			msgTemplate = new byte[0];
-		}
+		
+		this.handler = handler;
 
 	}
 
@@ -293,11 +272,11 @@ public class Graph<VertexValueType, EdgeValueType, MsgValueType> {
 				graphFilename))));
 		String ln = null;
 		long lnNum = 0;
-		if (format == graphFormat.EDGELIST) {
+		if (format.toLowerCase().equals("edgelist")) {
 			Pattern p = Pattern.compile("\\s");
 			while ((ln = bReader.readLine()) != null) {
 				numEdges++;
-				if (lnNum % 1000000 == 0) {
+				if (numEdges % 1000000 == 0) {
 					logger.info("Reading line : " + numEdges);
 				}
 				// String[] tokenStrings = ln.split("\\s");
@@ -316,7 +295,7 @@ public class Graph<VertexValueType, EdgeValueType, MsgValueType> {
 				}
 			}
 
-		} else if (format == graphFormat.ADJACENCY) {
+		} else if (format.toLowerCase().equals("adjacency")) {
 			while ((ln = bReader.readLine()) != null) {
 				// id,value : id,value->id,value->id,value
 				lnNum++;
@@ -329,8 +308,8 @@ public class Graph<VertexValueType, EdgeValueType, MsgValueType> {
 		}
 
 		bReader.close();
-
 		edgelist_process();
+		
 
 	}
 
@@ -385,7 +364,6 @@ public class Graph<VertexValueType, EdgeValueType, MsgValueType> {
 		/******************************************************************************************************************
 		 * 获取运行环境的缓存行的大小，为后面的多线程保存value提供并发性保证
 		 ******************************************************************************************************************/
-		int cachelineSize = config.getInt("cachelineSize");
 
 		/******************************************************************************************************************
 		 * 处理顶点value的shovel文件
@@ -445,47 +423,53 @@ public class Graph<VertexValueType, EdgeValueType, MsgValueType> {
 		int isstart = 0;
 
 		byte[] entry = null;
-		 ChronicleHelper ch = ChronicleHelper.newInstance();
+		ChronicleHelper ch = ChronicleHelper.newInstance();
 		// 从边构建邻接表
 		for (int s = 0; s < edges.length; s++) {
 			int from = Helper.getFirst(edges[s]);
-				
+
 			if (currentSequence == curvid) {
 				if (from != curvid) {
 					int count = s - isstart;
 					entry = new byte[count * (4 + sizeOfEdgeValue)];
 					int curstart = 0;
-					for(int p = isstart ; p < s;p++){
+					for (int p = isstart; p < s; p++) {
 						int to = Helper.getSecond(edges[p]);
-						System.arraycopy(Helper.intToByteArray(to), 0, entry, curstart, 4);
+						if(to > MAXID) MAXID = to;
+						System.arraycopy(Helper.intToByteArray(to), 0, entry,
+								curstart, 4);
 						curstart += 4;
-						System.arraycopy(edgeValues, p*sizeOfEdgeValue, entry, curstart, sizeOfEdgeValue);
+						System.arraycopy(edgeValues, p * sizeOfEdgeValue,
+								entry, curstart, sizeOfEdgeValue);
 						curstart += sizeOfEdgeValue;
 					}
-					
-					ch.write(entry, 100+entry.length);
+
+					ch.write(entry, 100 + entry.length);
 					curvid = from;
+					if(curvid - currentSequence == 1)
+						++currentSequence;
 					isstart = s;
+					if(from > MAXID) MAXID = from;
 				}
 			} else {
-				
-				while(curvid > currentSequence){
-					ch.write((byte)0x11, 100);
+
+				while (curvid > currentSequence) {
+					ch.write((byte) 0x11, 100);
 					currentSequence++;
 				}
 
 			}
 
 		}
+		
+		System.out.println(MAXID);
+		
+		//处理顶点value
+		initValue();
 
 	}
-
-	public void adj_process(String line) {
-
-		StringTokenizer st = new StringTokenizer(line, vertexToEdgeSeparate);
-		int tokens = st.countTokens();
-
-	}
+	
+	
 
 	// 解析邻接表行，转换为合适的格式 vid-offset id-offset id-offset id-offset
 	// vid,val : id,val->id,val->id,val
@@ -566,11 +550,47 @@ public class Graph<VertexValueType, EdgeValueType, MsgValueType> {
 
 	}
 
+	public  void initValue() throws IOException {
+		VertexValueType v = null;
+		int sizeof = vertexValueTemplate.length;
+		
+		for(int i=0;i<=MAXID;i++){
+			v = handler.initValue(i);
+			if(cacheLineEnabled){
+				verterxValueTypeBytesToValueConverter.setValue(vertexValueTemplate, v);
+				System.arraycopy(vertexValueTemplate,0,cachelineTemplate,0,sizeof);
+				System.arraycopy(vertexValueTemplate,0,cachelineTemplate,sizeof,sizeof);
+				graphDataValueStream.write(cachelineTemplate);
+			}else{
+				verterxValueTypeBytesToValueConverter.setValue(vertexValueTemplate, v);
+				graphDataValueStream.write(vertexValueTemplate);
+				graphDataValueStream.write(vertexValueTemplate);
+			}
+			
+			graphDataValueStream.flush();
+		}
+	}
+	
+	
 	public static void main(String[] args) throws IOException {
+		Handler<Integer,EmptyType,Integer> handler = new ComponentHandler();
+		Graph<Integer,EmptyType,Integer> g = new Graph<Integer,EmptyType,Integer>(null, new IntConverter(),  null, null, handler);
+		g.initValue();
+		
+		ChronicleHelper chronicleHelper = ChronicleHelper.newInstance();
+		
+		byte[] data = (byte[]) chronicleHelper.read(0);
+		System.out.println(Arrays.toString(data));
+		for(int i=0;i<data.length;i+=4){
+			int id = ((data[i] & 0xff) << 24)
+					+ ((data[i + 1] & 0xff) << 16)
+					+ ((data[i + 2] & 0xff) << 8)
+					+ (data[i + 3] & 0xff);
+			System.out.println(id);
+		}
+		
 
 	}
-
-	public void close() {
-	}
+	
 
 }

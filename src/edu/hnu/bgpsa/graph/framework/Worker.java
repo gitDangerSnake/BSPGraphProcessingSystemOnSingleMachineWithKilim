@@ -5,6 +5,7 @@ import java.util.Arrays;
 import java.util.Set;
 import java.util.TreeSet;
 
+import edu.hnu.cg.graph.Graph;
 import edu.hnu.cg.graph.MapperCore;
 import edu.hnu.cg.graph.BytesToValueConverter.BytesToValueConverter;
 import edu.hnu.cg.graph.config.Configure;
@@ -18,8 +19,8 @@ public class Worker<V, E, M> extends Task {
 	private static int counter;
 	private static ChronicleHelper chronicle;
 	private static int numOfWorkers;
-	private static int MAXID;
-	private static MapperCore mc;
+	protected static int MAXID;
+	protected static MapperCore mc;
 	private static boolean cacheLineEnabled;
 	private static int cacheLineSize;
 	private Set<Integer> breakPoints;
@@ -39,7 +40,6 @@ public class Worker<V, E, M> extends Task {
 
 	static {
 		Configure config = Configure.getConfigure();
-		MAXID = config.getInt("maxId");
 		numOfWorkers = config.getInt("nworkers");
 		chronicle = ChronicleHelper.newInstance();
 		String str = config.getStringValue("cacheLineEnabled");
@@ -47,7 +47,6 @@ public class Worker<V, E, M> extends Task {
 			cacheLineEnabled = true;
 		cacheLineSize = config.getInt("cachelineSize");
 
-		// 初始化mappercore
 	}
 
 	private int id = counter++;
@@ -55,7 +54,7 @@ public class Worker<V, E, M> extends Task {
 	private int sequence;
 
 	private boolean hasMore() {
-		return (sequence + counter) < MAXID;
+		return sequence <= MAXID;
 	}
 
 	private byte[] next() {
@@ -79,7 +78,7 @@ public class Worker<V, E, M> extends Task {
 
 	public Worker(Manager<V, E, M> mgr, BytesToValueConverter<V> v,
 			BytesToValueConverter<E> e, BytesToValueConverter<M> m,
-			Handler<V, E, M> h) {
+			Handler<V, E, M> h,int endite) {
 		this.mgr = mgr;
 		this.vTypeBytesToValueConverter = v;
 		this.eTypeBytesToValueConverter = e;
@@ -87,12 +86,15 @@ public class Worker<V, E, M> extends Task {
 		this.handler = h;
 		sequence = id;
 		breakPoints = new TreeSet<Integer>();
+		this.endIte = endite;
 
 	}
 
 	private Mailbox<Object> mailbox = new Mailbox<Object>(128, numOfWorkers);
 	private Mailbox<Signal> siganlMailbox = new Mailbox<Signal>(3, 3);
 
+	private volatile boolean iterationStart = true;
+	
 	class ComputeWorker extends Task {
 
 		@SuppressWarnings("unchecked")
@@ -102,21 +104,22 @@ public class Worker<V, E, M> extends Task {
 			Object msg = null;
 			V oldVal = null;
 			V newVal = null;
-			boolean isFirstMsg = true;
+			int lastTo = -1;
 
 			while (currentIte < endIte && computing) {
 				msg = mailbox.get();
 				// 如果msg是计算消息则，
 				if (msg instanceof Message) {
 					int to = ((Message) msg).getTo();
+					if(iterationStart) lastTo = to;
 
 					if (handler.isCombinerProvided()) { // 如果combine钩子方法被提供，那么这里执行消息的combine操作
 
 						M val = (M) ((Message) msg).getValue();
 						long offset = mindex(to, 1);
-						if (isFirstMsg) { // 如果是第一个消息，则无需合并，直接写入对应的位置
+						if (to!=lastTo) { // 如果是第一个消息，则无需合并，直接写入对应的位置
 							writeMsgVal(offset, val);
-							isFirstMsg = false;
+							lastTo = to;
 						} else { // 表明该消息位不是第一个消息，所以要和之前的结果进行合并操作
 							M oldMsgVal = getMsgValue(offset);
 							M newMsgVal = handler.combine(oldMsgVal, val);
@@ -129,8 +132,14 @@ public class Worker<V, E, M> extends Task {
 					} else {// 否则这里执行计算操作
 						long offset = vindex(to, 1);
 						oldVal = getValue(offset);
-						newVal = handler.compute(oldVal, (Message) msg,
-								currentIte);
+						if(to!=lastTo){
+							newVal = handler.compute(oldVal, (Message) msg, currentIte,true);
+							lastTo = to;
+							System.out.println("hello");
+						}else{
+							newVal = handler.compute(oldVal, (Message) msg, currentIte,false);
+						}
+						
 						if (!handler.isTwoValueEqual(oldVal, newVal)) {
 							writeValue(offset, newVal);
 							mgr.setUpdate(sequence);
@@ -200,13 +209,14 @@ public class Worker<V, E, M> extends Task {
 			if (!breakPoints.contains(sequence)) {
 				
 				long valueOffset = vindex(sequence, 0);
+//				System.out.println(Long.toHexString(valueOffset));
 				V val = getValue(valueOffset);
 
 				if (handler.isCombinerProvided()) {
 					// 这里完成对消息和value的计算
 					long msgValOffset = mindex(sequence, 0);
 					oldVal = getValue(valueOffset);
-					newVal = handler.compute(oldVal, getMsgValue(msgValOffset));
+					newVal = handler.computeWithCombine(oldVal, getMsgValue(msgValOffset));
 					if (!handler.isTwoValueEqual(oldVal, newVal)) {
 						writeValue(valueOffset, val);
 						mgr.setUpdate(sequence);
@@ -215,20 +225,26 @@ public class Worker<V, E, M> extends Task {
 					}
 				}
 
-				if (mgr.isUpdated(sequence)) {
-					int msize = eTypeBytesToValueConverter.sizeOf();
+				if (currentIte == 0 || mgr.isUpdated(sequence)) {
+					int msize = eTypeBytesToValueConverter == null? 0: eTypeBytesToValueConverter.sizeOf();
 					byte[] array = next();
+					if(array==null)
+						continue;
 					int outdegree = array.length / (4 + msize);
 					byte[] valueTemp = new byte[msize];
 
-					for (int i = 0; i < outdegree; i++) {
+					for (int i = 0; i < array.length; i+=4) {
 						int id = ((array[i] & 0xff) << 24)
 								+ ((array[i + 1] & 0xff) << 16)
 								+ ((array[i + 2] & 0xff) << 8)
 								+ (array[i + 3] & 0xff);
 						System.arraycopy(array, i + 4, valueTemp, 0, msize);
-						Message msg = handler.genMessage(sequence, id, val,
-								eTypeBytesToValueConverter.getValue(valueTemp));
+						Message msg = null;
+						if(eTypeBytesToValueConverter != null)
+							msg = handler.genMessage(sequence, id, val, eTypeBytesToValueConverter.getValue(valueTemp),outdegree);
+						else
+							msg = handler.genMessage(sequence, id, val, null, outdegree);
+						
 						if (msg != null) {
 							int dest_worker = locate(id);
 							mgr.send(dest_worker, msg);
@@ -241,7 +257,6 @@ public class Worker<V, E, M> extends Task {
 
 				// 递增处理序号
 				sequenceIncrement();
-
 			}
 
 			reset();
@@ -278,6 +293,7 @@ public class Worker<V, E, M> extends Task {
 			if (cacheLineEnabled) {
 				if (PINGPANG) {
 					if (type == 0) {
+System.out.println(to+"*" +cacheLineSize+"="+to*cacheLineSize+"--------"+Long.toHexString(to*cacheLineSize));
 						return to * cacheLineSize;
 					}
 					return to * cacheLineSize

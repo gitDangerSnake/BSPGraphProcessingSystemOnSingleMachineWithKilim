@@ -11,8 +11,13 @@ import java.security.PrivilegedAction;
 import java.util.ArrayList;
 import java.util.List;
 
+import edu.hnu.cg.graph.config.Configure;
 
 public class MapperCore {
+
+	private static String baseFile;
+
+	
 
 	private List<ByteBuffer> chunks = new ArrayList<>();
 	private final static long TWOGIG = Integer.MAX_VALUE;
@@ -20,34 +25,39 @@ public class MapperCore {
 	private File coreFile;
 	private RandomAccessFile coreFileAccessor;
 	
-	
-	private static class mapperCoreHolder{
-		private static MapperCore mapperCore;
-	}
 
-	private MapperCore(String filename,long size) throws IOException {
+
+	public MapperCore(String filename) {
 		coreFile = new File(filename);
 		// This is a for testing - to avoid the disk filling up
 		coreFile.deleteOnExit();
 		// Now create the actual file
-		coreFileAccessor = new RandomAccessFile(coreFile, "rw");
-		FileChannel channelMapper = coreFileAccessor.getChannel();
-		long nChunks = size / TWOGIG;
-		if (nChunks > Integer.MAX_VALUE)
-			throw new ArithmeticException("Requested File Size Too Large");
-		length = size;
-		long countDown = size;
-		long from = 0;
-		while (countDown > 0) {
-			long len = Math.min(TWOGIG, countDown);
-			ByteBuffer chunk = channelMapper.map(MapMode.READ_WRITE, from, len);
-			chunks.add(chunk);
-			from += len;
-			countDown -= len;
+		try {
+			coreFileAccessor = new RandomAccessFile(coreFile, "rw");
+
+			FileChannel channelMapper = coreFileAccessor.getChannel();
+			long size = 0;
+			size = coreFileAccessor.length();
+			long nChunks = size / TWOGIG;
+			if (nChunks > Integer.MAX_VALUE)
+				throw new ArithmeticException("Requested File Size Too Large");
+			length = size;
+			long countDown = size;
+			long from = 0;
+			while (countDown > 0) {
+				long len = Math.min(TWOGIG, countDown);
+				ByteBuffer chunk = channelMapper.map(MapMode.READ_WRITE, from,
+						len);
+				chunks.add(chunk);
+				from += len;
+				countDown -= len;
+			}
+		} catch (IOException e) {
+			e.printStackTrace();
 		}
 	}
-	
-	public int getLength(int offset){
+
+	public int getLength(int offset) {
 		return 0;
 	}
 
@@ -85,7 +95,7 @@ public class MapperCore {
 				}
 			}
 		} catch (IndexOutOfBoundsException i) {
-			throw new IOException("Out of bounds");
+			i.printStackTrace() ;
 		}
 		return dst;
 	}
@@ -139,16 +149,18 @@ public class MapperCore {
 	public long getSize() {
 		return length;
 	}
-	
+
 	@SuppressWarnings({ "unchecked", "rawtypes", "unused" })
 	private void clean(final MappedByteBuffer buffer) {
 		AccessController.doPrivileged(new PrivilegedAction() {
 			@Override
 			public Object run() {
 				try {
-					Method getCleanerMethod = buffer.getClass().getMethod("cleaner", new Class[0]);
+					Method getCleanerMethod = buffer.getClass().getMethod(
+							"cleaner", new Class[0]);
 					getCleanerMethod.setAccessible(true);
-					sun.misc.Cleaner cleaner = (sun.misc.Cleaner) getCleanerMethod.invoke(buffer, new Object[0]);
+					sun.misc.Cleaner cleaner = (sun.misc.Cleaner) getCleanerMethod
+							.invoke(buffer, new Object[0]);
 					cleaner.clean();
 				} catch (Exception e) {
 					e.printStackTrace();

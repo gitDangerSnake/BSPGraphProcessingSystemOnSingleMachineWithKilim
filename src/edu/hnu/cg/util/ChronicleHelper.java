@@ -15,7 +15,7 @@ public class ChronicleHelper {
 
 	private ChronicleHelper() {
 		try {
-			String basePath = Configure.getConfigure().getStringValue("adjDataPath");
+			String basePath = Configure.getConfigure().getStringValue("CSRDataPath");
 			System.out.println(basePath);
 			if(basePath != null){
 				chronicle = new IndexedChronicle(basePath);

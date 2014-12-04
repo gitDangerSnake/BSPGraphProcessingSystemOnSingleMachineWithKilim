@@ -2,11 +2,13 @@ package edu.hnu.bgpsa.graph.framework;
 
 import java.io.IOException;
 import java.util.BitSet;
+import java.util.logging.Logger;
 
 import kilim.Mailbox;
 import kilim.Pausable;
 import kilim.Task;
 import edu.hnu.bgpsa.graph.Exception.WrongNumberOfWorkersException;
+import edu.hnu.cg.graph.Filename;
 import edu.hnu.cg.graph.Graph;
 import edu.hnu.cg.graph.MapperCore;
 import edu.hnu.cg.graph.BytesToValueConverter.BytesToValueConverter;
@@ -30,10 +32,11 @@ public class Manager<V, E, M> extends Task {
 	private static int lengthBytesLength;
 	private static int degreeBytesLength;
 	private static int valueOffsetWidth;
+	private static Logger logger = Logger.getLogger("manager");
 
 	// global moniter flags
 	private static BitSet bits;
-	private BitSet workerBit;
+	private static BitSet workerBit;
 
 	static {
 		config = Configure.getConfigure(); // get configure
@@ -41,9 +44,8 @@ public class Manager<V, E, M> extends Task {
 		// get configurations
 		baseFilePath = config.getStringValue("baseFilePath");
 		format = config.getStringValue("format");
-		adjDataPath = config.getStringValue("adjDataPath");
+		adjDataPath = config.getStringValue("CSRDataPath");
 		nvertices = config.getInt("nvertices");
-		MAXID = config.getInt("maxId");
 		nworkers = config.getInt("nworkers");
 		if ((nworkers & (nworkers - 1)) != 0)
 			try {
@@ -75,13 +77,12 @@ public class Manager<V, E, M> extends Task {
 	private int endIte;
 	private Handler<V, E, M> handler;
 
-	// private MapperCore mc;
+	 private MapperCore mc;
 
 	public Manager(BytesToValueConverter<V> VTypeBytesToValueConverter,
 			BytesToValueConverter<E> ETypeBytesToValueConverter,
 			BytesToValueConverter<M> MTypeBytesToValueConverter,
-			Handler<V, E, M> handler) throws IOException {
-		// 初始化worker
+			Handler<V, E, M> handler,int endite) throws IOException {
 		this.VTypeBytesToValueConverter = VTypeBytesToValueConverter;
 		this.ETypeBytesToValueConverter = ETypeBytesToValueConverter;
 		this.MTypeBytesToValueConverter = MTypeBytesToValueConverter;
@@ -89,22 +90,34 @@ public class Manager<V, E, M> extends Task {
 		mailbox = new Mailbox<Signal>(nworkers, nworkers);
 //		checkbox = new Mailbox<Signal>(nworkers, nworkers);
 		workerBit = new BitSet(nworkers);
+		MAXID = Graph.getMaxID();
+		this.endIte = endite;
 
 	}
 
 	@Override
 	public void execute() throws Pausable {
 		// 载入数据
+		mc = new MapperCore(Filename.vertexValueFilename(baseFilePath));
+		logger.info("manager is about to start works...");
 		// 启动worker
 		startWorkers();
+		System.out.println("all workers has already started...");
 		new Monitor().start();
 		while (currIte < endIte) {
+			
+		logger.info("manager is about to active works...");
+		
 			activeWorkers();
-
+			
+		logger.info("manager is waitting works finish dispatch...");
+		
 			while (!monitorDispatchOver) {
 				// do some work
 				// logging or 预加载数据等等
 			}
+			
+		logger.info("Dispatch is over and manager is waitting works finish compute...");
 
 			monitorDispatchOver = false;
 			interfer();
@@ -122,6 +135,7 @@ public class Manager<V, E, M> extends Task {
 //			workerBit.clear();
 
 		}
+		System.out.println("terminate");
 
 		terminate();
 
@@ -209,11 +223,14 @@ public class Manager<V, E, M> extends Task {
 	}
 
 	private void startWorkers() throws Pausable {
+		Worker.mc = mc;
+		Worker.MAXID = MAXID;
 		for (int i = 0; i < nworkers; i++) {
 			workers[i] = new Worker<V,E,M>(this, VTypeBytesToValueConverter,
 					ETypeBytesToValueConverter, MTypeBytesToValueConverter,
-					handler);
+					handler,endIte);
 			workers[i].start();
+			System.out.println("worker "+ i + " has already start....");
 		}
 	}
 
