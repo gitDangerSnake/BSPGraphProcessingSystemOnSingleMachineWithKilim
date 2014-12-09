@@ -1,13 +1,16 @@
 package edu.hnu.cg.graph;
 
+import java.io.BufferedInputStream;
 import java.io.BufferedOutputStream;
 import java.io.BufferedReader;
+import java.io.BufferedWriter;
 import java.io.DataOutputStream;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileNotFoundException;
 import java.io.FileOutputStream;
 import java.io.FileReader;
+import java.io.FileWriter;
 import java.io.IOException;
 import java.util.Arrays;
 import java.util.StringTokenizer;
@@ -15,10 +18,12 @@ import java.util.logging.Logger;
 import java.util.regex.Pattern;
 
 import edu.hnu.bgpsa.app.component.ComponentHandler;
-import edu.hnu.bgpsa.app.component.EmptyType;
+import edu.hnu.bgpsa.app.pageRank.EmptyType;
+import edu.hnu.bgpsa.app.pageRank.PageRankHandler;
 import edu.hnu.bgpsa.graph.Exception.WrongNumberOfWorkersException;
 import edu.hnu.bgpsa.graph.framework.Handler;
 import edu.hnu.cg.graph.BytesToValueConverter.BytesToValueConverter;
+import edu.hnu.cg.graph.BytesToValueConverter.FloatConverter;
 import edu.hnu.cg.graph.BytesToValueConverter.IntConverter;
 import edu.hnu.cg.graph.config.Configure;
 import edu.hnu.cg.graph.preprocessing.EdgeProcessor;
@@ -83,8 +88,8 @@ public class Graph<VertexValueType, EdgeValueType, MsgValueType> {
 
 		logger = Logger.getLogger("Graph PreProcessing");
 	}
-	
-	public static int getMaxID(){
+
+	public static int getMaxID() {
 		return MAXID;
 	}
 
@@ -140,7 +145,6 @@ public class Graph<VertexValueType, EdgeValueType, MsgValueType> {
 	 * 默认的EdgeValueType字节缓存数组
 	 */
 	private byte[] edgeValueTemplate;
-	
 
 	private DataOutputStream shovelWriter;
 	private DataOutputStream shovelValueWriter;
@@ -153,13 +157,12 @@ public class Graph<VertexValueType, EdgeValueType, MsgValueType> {
 			BytesToValueConverter<EdgeValueType> edgeValueTypeBytesToValueConverter,
 			BytesToValueConverter<VertexValueType> verterxValueTypeBytesToValueConverter,
 			byte[] vertexValueTemplate, byte[] edgeValueTemplate,
-			DataOutputStream shovelWriter,
-			DataOutputStream shovelValueWriter,
+			DataOutputStream shovelWriter, DataOutputStream shovelValueWriter,
 			DataOutputStream graphDataValueStream,
 			Handler<VertexValueType, EdgeValueType, MsgValueType> handler) {
 
 		this.graphFilename = baseFilePath;
-		
+
 		this.vertexProcessor = vertexProcessor;
 		this.edgeProcessor = edgeProcessor;
 		this.edgeValueTypeBytesToValueConverter = edgeValueTypeBytesToValueConverter;
@@ -170,7 +173,7 @@ public class Graph<VertexValueType, EdgeValueType, MsgValueType> {
 		this.shovelWriter = shovelWriter;
 		this.shovelValueWriter = shovelValueWriter;
 		this.graphDataValueStream = graphDataValueStream;
-		
+
 		this.handler = handler;
 	}
 
@@ -212,7 +215,7 @@ public class Graph<VertexValueType, EdgeValueType, MsgValueType> {
 		} else {
 			vertexValueTemplate = new byte[0];
 		}
-		
+
 		this.handler = handler;
 
 	}
@@ -255,7 +258,7 @@ public class Graph<VertexValueType, EdgeValueType, MsgValueType> {
 		} else {
 			vertexValueTemplate = new byte[0];
 		}
-		
+
 		this.handler = handler;
 
 	}
@@ -268,68 +271,74 @@ public class Graph<VertexValueType, EdgeValueType, MsgValueType> {
 	 * 从Graph plain文件中读取数据并
 	 * */
 	public void preprocess() throws IOException {
-		BufferedReader bReader = new BufferedReader(new FileReader((new File(
-				graphFilename))));
-		String ln = null;
-		long lnNum = 0;
-		if (format.toLowerCase().equals("edgelist")) {
-			Pattern p = Pattern.compile("\\s");
-			while ((ln = bReader.readLine()) != null) {
-				numEdges++;
-				if (numEdges % 1000000 == 0) {
-					logger.info("Reading line : " + numEdges);
+		File chronicleDataFile = new File(adjDataPath + ".data");
+		File chronicleIndexFile = new File(adjDataPath + ".index");
+		File maxId = new File(adjDataPath+".maxid");
+
+		if (!chronicleDataFile.exists() || !chronicleIndexFile.exists() || !maxId.exists()) {
+			if(chronicleDataFile.exists()) chronicleDataFile.delete();
+			if(chronicleIndexFile.exists()) chronicleIndexFile.delete();
+			if(maxId.exists()) maxId.delete();
+			BufferedReader bReader = new BufferedReader(new FileReader(
+					(new File(graphFilename))));
+			String ln = null;
+			long lnNum = 0;
+			if (format.toLowerCase().equals("edgelist")) {
+				Pattern p = Pattern.compile("\\s");
+				while ((ln = bReader.readLine()) != null) {
+					numEdges++;
+					if (numEdges % 1000000 == 0) {
+						logger.info("Reading line : " + numEdges);
+					}
+					// String[] tokenStrings = ln.split("\\s");
+
+					String[] tokenStrings = p.split(ln);
+
+					if (tokenStrings.length == 2) {
+
+						addEdge(Integer.parseInt(tokenStrings[0]),
+								Integer.parseInt(tokenStrings[1]), null);
+
+					} else if (tokenStrings.length == 3) {
+
+						addEdge(Integer.parseInt(tokenStrings[0]),
+								Integer.parseInt(tokenStrings[1]),
+								tokenStrings[2]);
+					}
 				}
-				// String[] tokenStrings = ln.split("\\s");
 
-				String[] tokenStrings = p.split(ln);
-
-				if (tokenStrings.length == 2) {
-
-					addEdge(Integer.parseInt(tokenStrings[0]),
-							Integer.parseInt(tokenStrings[1]), null);
-
-				} else if (tokenStrings.length == 3) {
-
-					addEdge(Integer.parseInt(tokenStrings[0]),
-							Integer.parseInt(tokenStrings[1]), tokenStrings[2]);
+			} else if (format.toLowerCase().equals("adjacency")) {
+				while ((ln = bReader.readLine()) != null) {
+					// id,value : id,value->id,value->id,value
+					lnNum++;
+					if (lnNum % 1000000 == 0) {
+						logger.info("Reading line : " + lnNum);
+					}
+					extractLine(ln);
 				}
+
 			}
 
-		} else if (format.toLowerCase().equals("adjacency")) {
-			while ((ln = bReader.readLine()) != null) {
-				// id,value : id,value->id,value->id,value
-				lnNum++;
-				if (lnNum % 1000000 == 0) {
-					logger.info("Reading line : " + lnNum);
-				}
-				extractLine(ln);
-			}
-
+			bReader.close();
+			edgelist_process();
+		} else {
+		BufferedReader br= new BufferedReader(new FileReader(maxId));
+		String mi = br.readLine();
+		try{
+			int m = Integer.valueOf(mi);
+			MAXID = m;
+			br.close();
+		}catch (Exception e) {
+			e.printStackTrace();
 		}
-
-		bReader.close();
-		edgelist_process();
-		
+			initValue();
+		}
 
 	}
 
 	public void addEdge(int from, int to, String token) throws IOException {
-		if (from == to) {
-			if (vertexProcessor != null) {
-				VertexValueType value = vertexProcessor.receiveVertexValue(
-						from, token);
-				try {
-					addVertexValue(from, value);
-				} catch (IOException e) {
-					e.printStackTrace();
-				}
-			}
-		}
-		addToShovel(
-				from,
-				to,
-				(edgeProcessor != null ? edgeProcessor.receiveEdge(from, to,
-						token) : null));
+		
+		addToShovel( from, to, (edgeProcessor != null ? edgeProcessor.receiveEdge(from, to, token) : null));
 	}
 
 	private void addToShovel(int from, int to, EdgeValueType value)
@@ -340,13 +349,13 @@ public class Graph<VertexValueType, EdgeValueType, MsgValueType> {
 					value);
 			shovelWriter.write(edgeValueTemplate);
 		}
+		shovelWriter.flush();
 	}
 
 	public void addVertexValue(int from, VertexValueType value)
 			throws IOException {
 		shovelValueWriter.writeLong(Helper.pack(0, from));
-		verterxValueTypeBytesToValueConverter.setValue(vertexValueTemplate,
-				value);
+		verterxValueTypeBytesToValueConverter.setValue(vertexValueTemplate, value);
 		shovelValueWriter.write(vertexValueTemplate);
 
 	}
@@ -370,6 +379,7 @@ public class Graph<VertexValueType, EdgeValueType, MsgValueType> {
 		 ******************************************************************************************************************/
 		File shovelValueFile = new File(
 				Filename.shovelValueFilename(graphFilename));
+		shovelValueFile.deleteOnExit();
 
 		long len = shovelValueFile.length();
 		long[] vertices = new long[(int) (len / (8 + sizeOfValue))];
@@ -393,6 +403,7 @@ public class Graph<VertexValueType, EdgeValueType, MsgValueType> {
 		 ******************************************************************************************************************/
 
 		File shovelFile = new File(Filename.shovelFilename(graphFilename));
+		shovelFile.deleteOnExit();
 		long[] edges = new long[(int) shovelFile.length()
 				/ (8 + sizeOfEdgeValue)];
 		byte[] edgeValues = new byte[edges.length * sizeOfEdgeValue];
@@ -418,58 +429,85 @@ public class Graph<VertexValueType, EdgeValueType, MsgValueType> {
 		/******************************************************************************************************************
 		 * 处理边的shovel文件
 		 ******************************************************************************************************************/
-		int curvid = 0;
+		int curvid = -1;
 		int currentSequence = 0;
 		int isstart = 0;
 
+		boolean flag = false;
 		byte[] entry = null;
 		ChronicleHelper ch = ChronicleHelper.newInstance();
 		// 从边构建邻接表
 		for (int s = 0; s < edges.length; s++) {
-			int from = Helper.getFirst(edges[s]);
-
-			if (currentSequence == curvid) {
-				if (from != curvid) {
-					int count = s - isstart;
-					entry = new byte[count * (4 + sizeOfEdgeValue)];
-					int curstart = 0;
-					for (int p = isstart; p < s; p++) {
-						int to = Helper.getSecond(edges[p]);
-						if(to > MAXID) MAXID = to;
-						System.arraycopy(Helper.intToByteArray(to), 0, entry,
-								curstart, 4);
-						curstart += 4;
-						System.arraycopy(edgeValues, p * sizeOfEdgeValue,
-								entry, curstart, sizeOfEdgeValue);
-						curstart += sizeOfEdgeValue;
-					}
-
-					ch.write(entry, 100 + entry.length);
+			
+			int from = Helper.getFirst(edges[s]); 
+			
+			if(from != curvid ){
+				if(curvid == -1) {
 					curvid = from;
-					if(curvid - currentSequence == 1)
-						++currentSequence;
-					isstart = s;
-					if(from > MAXID) MAXID = from;
+					continue;
+				}else{
+					int outdegree = s-isstart;
+					entry = new byte[outdegree*(4+sizeOfEdgeValue)];
+					int curstart = 0;
+					while(isstart < s){
+						int to = Helper.getSecond(edges[isstart]);
+						if(to>MAXID) MAXID = to;
+						System.arraycopy(Helper.intToByteArray(to), 0, entry, curstart, 4);
+						curstart += 4;
+						System.arraycopy(edgeValues, isstart * sizeOfEdgeValue, entry, curstart, sizeOfEdgeValue);
+						curstart += sizeOfEdgeValue;
+						isstart++;
+					}
+					while(currentSequence < curvid){
+						ch.write((byte)-1, 100);
+						currentSequence++;
+					}
+					ch.write(entry, 100+entry.length);
+					currentSequence++;
+					curvid = from;
+					if(curvid > MAXID) MAXID = curvid;
+					
 				}
-			} else {
-
-				while (curvid > currentSequence) {
-					ch.write((byte) 0x11, 100);
+			}
+			
+			if(s == edges.length-1 && curvid == from){
+				int outdegree = s -isstart + 1;
+				
+				entry = new byte[outdegree*(4+sizeOfEdgeValue)];
+				int curstart = 0;
+				
+				while(isstart < s+1){
+					int to = Helper.getSecond(edges[isstart]);
+					if(to>MAXID) MAXID = to;
+					System.arraycopy(Helper.intToByteArray(to), 0, entry, curstart, 4);
+					curstart += 4;
+					System.arraycopy(edgeValues, isstart * sizeOfEdgeValue, entry, curstart, sizeOfEdgeValue);
+					curstart += sizeOfEdgeValue;
+					isstart++;
+				}
+				while(currentSequence < curvid){
+					ch.write((byte)-1, 100);
 					currentSequence++;
 				}
-
+				ch.write(entry, entry.length+100);
+				currentSequence++;
+				
 			}
 
+
 		}
-		
+
 		System.out.println(MAXID);
-		
-		//处理顶点value
+		File maxId = new File(adjDataPath+".maxid");
+		BufferedWriter bw = new BufferedWriter(new FileWriter(maxId));
+		bw.write(new String(MAXID+""));
+		bw.flush();
+		bw.close();
+
+		// 处理顶点value
 		initValue();
 
 	}
-	
-	
 
 	// 解析邻接表行，转换为合适的格式 vid-offset id-offset id-offset id-offset
 	// vid,val : id,val->id,val->id,val
@@ -550,47 +588,61 @@ public class Graph<VertexValueType, EdgeValueType, MsgValueType> {
 
 	}
 
-	public  void initValue() throws IOException {
+	public void initValue() throws IOException {
 		VertexValueType v = null;
 		int sizeof = vertexValueTemplate.length;
-		
-		for(int i=0;i<=MAXID;i++){
+
+		for (int i = 0; i <= MAXID; i++) {
 			v = handler.initValue(i);
-			if(cacheLineEnabled){
-				verterxValueTypeBytesToValueConverter.setValue(vertexValueTemplate, v);
-				System.arraycopy(vertexValueTemplate,0,cachelineTemplate,0,sizeof);
-				System.arraycopy(vertexValueTemplate,0,cachelineTemplate,sizeof,sizeof);
+			if (cacheLineEnabled) {
+				verterxValueTypeBytesToValueConverter.setValue(
+						vertexValueTemplate, v);
+				System.arraycopy(vertexValueTemplate, 0, cachelineTemplate, 0,
+						sizeof);
+				System.arraycopy(vertexValueTemplate, 0, cachelineTemplate,
+						sizeof, sizeof);
 				graphDataValueStream.write(cachelineTemplate);
-			}else{
-				verterxValueTypeBytesToValueConverter.setValue(vertexValueTemplate, v);
+			} else {
+				verterxValueTypeBytesToValueConverter.setValue(
+						vertexValueTemplate, v);
 				graphDataValueStream.write(vertexValueTemplate);
 				graphDataValueStream.write(vertexValueTemplate);
 			}
-			
+
 			graphDataValueStream.flush();
 		}
 	}
-	
-	
+
 	public static void main(String[] args) throws IOException {
-		Handler<Integer,EmptyType,Integer> handler = new ComponentHandler();
-		Graph<Integer,EmptyType,Integer> g = new Graph<Integer,EmptyType,Integer>(null, new IntConverter(),  null, null, handler);
-		g.initValue();
+		Handler<Float, EmptyType, Float> handler = new PageRankHandler();
+		Graph<Float, EmptyType, Float> g = new Graph<>(null,
+				new FloatConverter(), null, null, handler);
+		g.preprocess();
+
+		ChronicleHelper h = ChronicleHelper.newInstance();
+
 		
-		ChronicleHelper chronicleHelper = ChronicleHelper.newInstance();
-		
-		byte[] data = (byte[]) chronicleHelper.read(0);
-		System.out.println(Arrays.toString(data));
-		for(int i=0;i<data.length;i+=4){
-			int id = ((data[i] & 0xff) << 24)
-					+ ((data[i + 1] & 0xff) << 16)
-					+ ((data[i + 2] & 0xff) << 8)
-					+ (data[i + 3] & 0xff);
-			System.out.println(id);
+		for (int i = 0; i <= MAXID; i++) {
+			Object obj = h.read(i);
+			if (obj instanceof byte[]) {
+				byte[] arr = (byte[]) obj;
+				System.out.println(arr.length/4);
+				System.out.print(i + " : [ ");
+				for (int k = 0; k < arr.length; k += 4) {
+					int id = ((arr[k] & 0xff) << 24)
+							+ ((arr[k + 1] & 0xff) << 16)
+							+ ((arr[k + 2] & 0xff) << 8) + (arr[k + 3] & 0xff); // 计算出边的目的顶点
+					System.out.print("," + id);
+				}
+
+				System.out.println("]");
+			} else if (obj != null) {
+				System.out.println(i + " " + obj);
+			} else if (obj == null) {
+				System.out.println(i + " null");
+			}
 		}
-		
 
 	}
-	
 
 }

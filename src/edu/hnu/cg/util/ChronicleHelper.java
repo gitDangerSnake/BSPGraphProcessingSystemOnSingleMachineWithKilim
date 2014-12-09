@@ -1,6 +1,7 @@
 package edu.hnu.cg.util;
 
 import java.io.IOException;
+import java.util.Arrays;
 
 import edu.hnu.cg.graph.config.Configure;
 import net.openhft.chronicle.ExcerptAppender;
@@ -77,10 +78,33 @@ public class ChronicleHelper {
 				obj = reader.readObject();
 				reader.finish();
 			} catch (Exception e) {
+				System.out.println("get exception at " + index);
 				e.printStackTrace();
 			}
 		}
 		return obj;
+	}
+	
+	public static void main(String[] args) throws InterruptedException {
+		ChronicleHelper h = ChronicleHelper.newInstance();
+		for(int i=0;i<4000000;i++){
+			Object obj = h.read(i);
+			if(obj instanceof byte[]){
+				byte[] arr = (byte[])obj;
+				System.out.print(i +" : [ ");
+				for(int k=0;k<arr.length/4;k+=4){
+					int id =  ((arr[i] & 0xff) << 24) + ((arr[i + 1] & 0xff) << 16) 
+							+ ((arr[i + 2] & 0xff) << 8) + (arr[i + 3] & 0xff); // 计算出边的目的顶点
+					System.out.print(","+id);
+				}
+				
+				System.out.println("]");
+			}else if(obj!=null){
+				System.out.println(i + " " + obj);
+			}else if(obj==null){
+				System.out.println(i+ " null");
+			}
+		}
 	}
 
 }

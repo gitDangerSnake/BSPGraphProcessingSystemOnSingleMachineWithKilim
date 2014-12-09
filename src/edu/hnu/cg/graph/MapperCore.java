@@ -30,7 +30,7 @@ public class MapperCore {
 	public MapperCore(String filename) {
 		coreFile = new File(filename);
 		// This is a for testing - to avoid the disk filling up
-		coreFile.deleteOnExit();
+//		coreFile.deleteOnExit();
 		// Now create the actual file
 		try {
 			coreFileAccessor = new RandomAccessFile(coreFile, "rw");

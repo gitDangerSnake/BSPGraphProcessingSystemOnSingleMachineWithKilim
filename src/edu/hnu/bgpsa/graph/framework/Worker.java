@@ -2,10 +2,10 @@ package edu.hnu.bgpsa.graph.framework;
 
 import java.io.IOException;
 import java.util.Arrays;
+import java.util.BitSet;
 import java.util.Set;
 import java.util.TreeSet;
 
-import edu.hnu.cg.graph.Graph;
 import edu.hnu.cg.graph.MapperCore;
 import edu.hnu.cg.graph.BytesToValueConverter.BytesToValueConverter;
 import edu.hnu.cg.graph.config.Configure;
@@ -24,6 +24,7 @@ public class Worker<V, E, M> extends Task {
 	private static boolean cacheLineEnabled;
 	private static int cacheLineSize;
 	private Set<Integer> breakPoints;
+	public static BitSet firstMsgOrNot;
 
 	private static boolean PINGPANG = true;
 
@@ -49,7 +50,7 @@ public class Worker<V, E, M> extends Task {
 
 	}
 
-	private int id = counter++;
+	private int wid = counter++;
 
 	private int sequence;
 
@@ -62,7 +63,7 @@ public class Worker<V, E, M> extends Task {
 		if (eturn instanceof byte[]) {
 			return (byte[]) eturn;
 		}
-
+		
 		breakPoints.add(sequence);
 		sequenceIncrement();
 		return null;
@@ -73,28 +74,28 @@ public class Worker<V, E, M> extends Task {
 	}
 
 	private void reset() {
-		sequence = id;
+		sequence = wid;
 	}
 
 	public Worker(Manager<V, E, M> mgr, BytesToValueConverter<V> v,
 			BytesToValueConverter<E> e, BytesToValueConverter<M> m,
-			Handler<V, E, M> h,int endite) {
+			Handler<V, E, M> h, int endite) {
 		this.mgr = mgr;
 		this.vTypeBytesToValueConverter = v;
 		this.eTypeBytesToValueConverter = e;
 		this.mTypeBytesToValueConverter = m;
 		this.handler = h;
-		sequence = id;
+		sequence = wid;
 		breakPoints = new TreeSet<Integer>();
 		this.endIte = endite;
 
 	}
 
-	private Mailbox<Object> mailbox = new Mailbox<Object>(128, numOfWorkers);
+	private Mailbox<Object> mailbox = new Mailbox<Object>(numOfWorkers/2,numOfWorkers);
 	private Mailbox<Signal> siganlMailbox = new Mailbox<Signal>(3, 3);
 
 	private volatile boolean iterationStart = true;
-	
+
 	class ComputeWorker extends Task {
 
 		@SuppressWarnings("unchecked")
@@ -107,19 +108,22 @@ public class Worker<V, E, M> extends Task {
 			int lastTo = -1;
 
 			while (currentIte < endIte && computing) {
+//				if(currentIte == 3)
+//			System.out.println(wid+" is waiting computing message...");
 				msg = mailbox.get();
+				// System.out.println("hello");
 				// 如果msg是计算消息则，
 				if (msg instanceof Message) {
 					int to = ((Message) msg).getTo();
-					if(iterationStart) lastTo = to;
+				
 
 					if (handler.isCombinerProvided()) { // 如果combine钩子方法被提供，那么这里执行消息的combine操作
 
 						M val = (M) ((Message) msg).getValue();
 						long offset = mindex(to, 1);
-						if (to!=lastTo) { // 如果是第一个消息，则无需合并，直接写入对应的位置
+						if (!firstMsgOrNot.get(to)) { // 如果是第一个消息，则无需合并，直接写入对应的位置
 							writeMsgVal(offset, val);
-							lastTo = to;
+							firstMsgOrNot.set(to);
 						} else { // 表明该消息位不是第一个消息，所以要和之前的结果进行合并操作
 							M oldMsgVal = getMsgValue(offset);
 							M newMsgVal = handler.combine(oldMsgVal, val);
@@ -132,14 +136,15 @@ public class Worker<V, E, M> extends Task {
 					} else {// 否则这里执行计算操作
 						long offset = vindex(to, 1);
 						oldVal = getValue(offset);
-						if(to!=lastTo){
-							newVal = handler.compute(oldVal, (Message) msg, currentIte,true);
-							lastTo = to;
-							System.out.println("hello");
-						}else{
-							newVal = handler.compute(oldVal, (Message) msg, currentIte,false);
+						if (!firstMsgOrNot.get(to)) {
+							newVal = handler.compute(oldVal, (Message) msg,
+									currentIte, true);
+							firstMsgOrNot.set(to);
+						} else {
+							newVal = handler.compute(oldVal, (Message) msg,
+									currentIte, false);
 						}
-						
+
 						if (!handler.isTwoValueEqual(oldVal, newVal)) {
 							writeValue(offset, newVal);
 							mgr.setUpdate(sequence);
@@ -147,37 +152,100 @@ public class Worker<V, E, M> extends Task {
 							mgr.setUnupdated(sequence);
 						}
 					}
+					
 
 				} else if ((msg instanceof Signal)
 						&& (msg == Signal.ITERATION_OVER)) { // 如果消息不是计算消息，则进行其他的对应操作
 					mgr.note(Signal.COMPUTE_OVER);
+				}else if((msg instanceof Signal) && (msg == Signal.COMPUTE_OVER)){
+					System.out.println("receive signal from my dispather...");
+					break;
 				}
 				msg = null;
 				oldVal = null;
 				newVal = null;
 			}
+			
+			mgr.note(Signal.COMPUTE_OVER);
+			
 		}
 	}
 
-	private int currentIte = 0;
+	private volatile int currentIte = 0;
 	private int endIte;
 	private volatile boolean computing = true;
 
 	@Override
 	public void execute() throws Pausable, IOException {
+		int esize = eTypeBytesToValueConverter == null ? 0 : eTypeBytesToValueConverter.sizeOf(); //edge value 占用多少字节
+		byte[] eTemp = new byte[esize];
+		
 		// 获取到顶点数据，根据内容进行消息分发
 		new ComputeWorker().start();
 		while (currentIte < endIte && computing) {
 			Signal s = siganlMailbox.get();
-			if (s == Signal.ITERATION_START) {
-				dispatch();
-			} else if (s == Signal.CHECK_STATE) {
+			
+			if (s == Signal.ITERATION_START) { //如果信号类型是开始迭代开始，则开始取数据，分发消息
+				
+				while(hasMore()){ //如果本序列还有数据则继续取数据
+					if(!breakPoints.contains(sequence)){
+						
+						long valueOffset = vindex(sequence,0); //从内存映射文件中获取数据，并且获取的是PINGPANG 所指向的一列
+						V val = getValue(valueOffset);
+						
+						if(currentIte == 0 || mgr.isUpdated(sequence)){ //只有在上一个超级步中，如果该值发生了改变才会发送更新到其他顶点 或者是第一个超级步
+							
+							byte[] arr = next();//从CSR 数据文件中获取当前sequence所对应的数据
+					
+							if(arr!=null){//如果arr不为空则，表示取数据成功，进行消息分发
+								int outdegree = arr.length/(4+esize); //计算出对应本sequence的顶点的出边度数
+								for(int i=0;i<arr.length;i+=(4+esize)){ //逐个进行消息分发
+									
+									int vid = ((arr[i] & 0xff) << 24) + ((arr[i + 1] & 0xff) << 16) 
+											+ ((arr[i + 2] & 0xff) << 8) + (arr[i + 3] & 0xff); // 计算出边的目的顶点
+									if(eTypeBytesToValueConverter!= null){
+										System.arraycopy(arr, i+4, eTemp, 0, esize);
+									}
+									
+									Message msg = null;
+									
+									//根据用户的需求生成消息
+									if(eTypeBytesToValueConverter!= null){
+										msg = handler.genMessage(sequence, vid, val, eTypeBytesToValueConverter.getValue(eTemp), outdegree);
+									}else{
+										msg = handler.genMessage(sequence, vid, val, null, outdegree);
+									}
+									
+									if(msg!=null){
+										int dest = locate(vid);
+										mgr.send(dest, msg); //发送消息到目的worker
+									}
+									
+									
+								} //消息分发完了，准备获取下一个数据
+								
+							}//如果获得的数据为空，则表示该sequence对应的数据缺失,不进行处理
+							
+						}//如果当前sequence对应的顶点的value相对于上个迭代的值没有发生改变，则不需要发送消息
+					}//如果在breakPoint集合中存在的sequence，表示该处的顶点数据缺失，不存在则无需去取数据,直接进行下一个
+					
+					//则在此处，sequence迁移至下一个应该被处理的数据位置
+					sequenceIncrement();
+				}//当不在hasMore的时候，表示在该迭代步骤内，本worker需要分发消息的数据已经处理完了，通知manager，告诉他分发完成的信号,并且重直sequence
+				
+				reset(); //重直sequence
+				mgr.note(Signal.DISPATCH_OVER);//通知manager分发完成
+				
+				
+				
+			} 
+			else if (s == Signal.CHECK_STATE) {
 				while ((s = siganlMailbox.getnb()) == null) {
 					if (handler.isEqualsProvided()) {
 						V o = getValue(vindex(sequence, 0));
 						V n = getValue(vindex(sequence, 1));
 						if (!handler.isTwoValueEqual(n, o)) {
-							mgr.unactive(id);
+							mgr.unactive(wid);
 							reset();
 							break;
 						}
@@ -186,37 +254,47 @@ public class Worker<V, E, M> extends Task {
 						byte[] n = getRawValue(vindex(sequence, 0));
 						boolean same = Arrays.equals(o, n);
 						if (!same) {
-							mgr.unactive(id);
+							mgr.unactive(wid);
 							reset();
 							break;
 						}
 					}
 				}
-				if (s == Signal.CHECK_STATE_OVER) {
 
-				}
-
+			} 
+			
+			else if (s == Signal.OVER) { //如果消息是表示计算结束的，则将运行标记变成false
+				computing = false;
+			} else {
+				unhandled(s); //否则，消息处理未定义
 			}
+				currentIte++; //迭代+1
 		}
+		
+		mgr.note(Signal.DISPATCH_OVER);
+//		mailbox.put(Signal.COMPUTE_OVER);
+
 	}
 
 	private void dispatch() throws IOException, Pausable {
 
 		V oldVal = null;
 		V newVal = null;
+
 		while (hasMore()) {
 
 			if (!breakPoints.contains(sequence)) {
-				
+
 				long valueOffset = vindex(sequence, 0);
-//				System.out.println(Long.toHexString(valueOffset));
+				// System.out.println(Long.toHexString(valueOffset));
 				V val = getValue(valueOffset);
 
 				if (handler.isCombinerProvided()) {
 					// 这里完成对消息和value的计算
 					long msgValOffset = mindex(sequence, 0);
 					oldVal = getValue(valueOffset);
-					newVal = handler.computeWithCombine(oldVal, getMsgValue(msgValOffset));
+					newVal = handler.computeWithCombine(oldVal,
+							getMsgValue(msgValOffset));
 					if (!handler.isTwoValueEqual(oldVal, newVal)) {
 						writeValue(valueOffset, val);
 						mgr.setUpdate(sequence);
@@ -224,27 +302,44 @@ public class Worker<V, E, M> extends Task {
 						mgr.setUnupdated(sequence);
 					}
 				}
+				
 
 				if (currentIte == 0 || mgr.isUpdated(sequence)) {
-					int msize = eTypeBytesToValueConverter == null? 0: eTypeBytesToValueConverter.sizeOf();
+					int msize = eTypeBytesToValueConverter == null ? 0
+							: eTypeBytesToValueConverter.sizeOf();
 					byte[] array = next();
-					if(array==null)
+					if (array == null)
 						continue;
 					int outdegree = array.length / (4 + msize);
 					byte[] valueTemp = new byte[msize];
+					
+					//debug
+					StringBuilder sb = null;
+					if(currentIte==1)
+						sb = new StringBuilder();
+					//debug
 
-					for (int i = 0; i < array.length; i+=4) {
+					for (int i = 0; i < array.length; i += 4) {
 						int id = ((array[i] & 0xff) << 24)
 								+ ((array[i + 1] & 0xff) << 16)
 								+ ((array[i + 2] & 0xff) << 8)
 								+ (array[i + 3] & 0xff);
+						
+					//debug
+						if(currentIte==1)
+							sb.append(id).append(",");
+					//debug
+						
 						System.arraycopy(array, i + 4, valueTemp, 0, msize);
 						Message msg = null;
-						if(eTypeBytesToValueConverter != null)
-							msg = handler.genMessage(sequence, id, val, eTypeBytesToValueConverter.getValue(valueTemp),outdegree);
+						if (eTypeBytesToValueConverter != null)
+							msg = handler.genMessage(sequence, id, val,
+									eTypeBytesToValueConverter
+											.getValue(valueTemp), outdegree);
 						else
-							msg = handler.genMessage(sequence, id, val, null, outdegree);
-						
+							msg = handler.genMessage(sequence, id, val, null,
+									outdegree);
+
 						if (msg != null) {
 							int dest_worker = locate(id);
 							mgr.send(dest_worker, msg);
@@ -252,6 +347,10 @@ public class Worker<V, E, M> extends Task {
 							// 通知manager这里没有message
 						}
 					}
+					//debug
+					if(currentIte==1)
+						System.out.println("CSR: "+sequence +" ["+sb.toString()+"]");
+					//debug
 
 				}
 
@@ -259,18 +358,13 @@ public class Worker<V, E, M> extends Task {
 				sequenceIncrement();
 			}
 
-			reset();
-			// 通知manager 分发完成
-			mgr.note(Signal.DISPATCH_OVER);
-			Signal s = siganlMailbox.get();
-			if (s == Signal.ITERATION_START) {
-				currentIte++;
-			} else if (s == Signal.OVER) {
-				computing = false;
-			} else {
-				unhandled(s);
-			}
 		}
+
+		reset();
+		// 通知manager 分发完成
+		mgr.note(Signal.DISPATCH_OVER);
+		System.out.println(wid + " notify manager dispatch over");
+
 	}
 
 	private void unhandled(Signal s) {
@@ -293,7 +387,8 @@ public class Worker<V, E, M> extends Task {
 			if (cacheLineEnabled) {
 				if (PINGPANG) {
 					if (type == 0) {
-System.out.println(to+"*" +cacheLineSize+"="+to*cacheLineSize+"--------"+Long.toHexString(to*cacheLineSize));
+						// System.out.println(to+"*"
+						// +cacheLineSize+"="+to*cacheLineSize+"--------"+Long.toHexString(to*cacheLineSize));
 						return to * cacheLineSize;
 					}
 					return to * cacheLineSize
@@ -399,7 +494,7 @@ System.out.println(to+"*" +cacheLineSize+"="+to*cacheLineSize+"--------"+Long.to
 	}
 
 	public void put(Message msg) throws Pausable {
-		mailbox.put(msg);
+		mailbox.putnb(msg);
 	}
 
 	public void putSignal(Signal s) throws Pausable {

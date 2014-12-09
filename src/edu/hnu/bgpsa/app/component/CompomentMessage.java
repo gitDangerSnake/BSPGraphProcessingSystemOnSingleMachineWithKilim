@@ -4,17 +4,19 @@ import edu.hnu.bgpsa.graph.framework.Message;
 
 class CompomentMessage implements Message{
 		
+	int from;
 		int to;
 		int val;
 		
-		public CompomentMessage(int to,int val){
+		public CompomentMessage(int from,int to,int val){
+			this.from = from;
 			this.to = to;
 			this.val =val;
 		}
 
 		@Override
 		public int getFrom() {
-			return -1;
+			return from;
 		}
 
 		@Override

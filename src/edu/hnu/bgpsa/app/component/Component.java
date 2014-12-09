@@ -17,10 +17,8 @@ public class Component {
 		Handler<Integer,EmptyType,Integer> handler = new ComponentHandler();
 		Graph<Integer,EmptyType,Integer> g = new Graph<Integer,EmptyType,Integer>(null, ic,  null, null, handler);
 		g.preprocess();
-		Manager<Integer,EmptyType,Integer> mgr =
-				new Manager(ic, null, ic, handler,100);
+		Manager<Integer,EmptyType,Integer> mgr = new Manager(ic, null, ic, handler,5);
 		mgr.start();
-		
 	}
 
 }

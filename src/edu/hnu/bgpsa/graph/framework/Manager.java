@@ -61,8 +61,6 @@ public class Manager<V, E, M> extends Task {
 		degreeBytesLength = config.getInt("degreeBytesLength");
 		valueOffsetWidth = config.getInt("valueOffsetWidth");
 
-		bits = new BitSet(MAXID);
-		bits.set(0, MAXID);
 	}
 
 	private Mailbox<Signal> mailbox;
@@ -73,7 +71,7 @@ public class Manager<V, E, M> extends Task {
 	private BytesToValueConverter<V> VTypeBytesToValueConverter;
 	private BytesToValueConverter<E> ETypeBytesToValueConverter;
 	private BytesToValueConverter<M> MTypeBytesToValueConverter;
-	private int currIte;
+	private int currIte=0;
 	private int endIte;
 	private Handler<V, E, M> handler;
 
@@ -91,6 +89,8 @@ public class Manager<V, E, M> extends Task {
 //		checkbox = new Mailbox<Signal>(nworkers, nworkers);
 		workerBit = new BitSet(nworkers);
 		MAXID = Graph.getMaxID();
+		bits = new BitSet(MAXID+1);
+		bits.set(0, MAXID+1);
 		this.endIte = endite;
 
 	}
@@ -99,45 +99,41 @@ public class Manager<V, E, M> extends Task {
 	public void execute() throws Pausable {
 		// 载入数据
 		mc = new MapperCore(Filename.vertexValueFilename(baseFilePath));
-		logger.info("manager is about to start works...");
 		// 启动worker
 		startWorkers();
-		System.out.println("all workers has already started...");
 		new Monitor().start();
+		Signal s = null;
 		while (currIte < endIte) {
 			
-		logger.info("manager is about to active works...");
-		
 			activeWorkers();
 			
-		logger.info("manager is waitting works finish dispatch...");
 		
-			while (!monitorDispatchOver) {
-				// do some work
-				// logging or 预加载数据等等
+			s = monitor.get();
+			if(s == Signal.MONITOR_DISPATCH_OVER){
+				logger.info(currIte +" iteration's Dispatch over...");
 			}
 			
-		logger.info("Dispatch is over and manager is waitting works finish compute...");
-
-			monitorDispatchOver = false;
 			interfer();
-			while (!monitorComputeOver) {
-				// do some work here
-				// logging
+			System.out.println("wait finish");
+			s = monitor.get();
+			System.out.println(s);
+			if(s == Signal.MONITOR_COMPUTE_OVER){
+				logger.info(currIte+ " iteration's Compute over...");
 			}
+			
 
-			monitorComputeOver = false;
 			Worker.PingPang();
 
 			if (convergence()) {
 				break;
 			}
-//			workerBit.clear();
-
+			workerBit.clear();
+			currIte++;
 		}
-		System.out.println("terminate");
 
+		System.out.println("*********"+System.currentTimeMillis()+"************");
 		terminate();
+		System.exit(0);
 
 	}
 
@@ -187,34 +183,43 @@ public class Manager<V, E, M> extends Task {
 	private void interfer() throws Pausable {
 		for (int i = 0; i < nworkers; i++) {
 			workers[i].put(Signal.ITERATION_OVER);
+			if(currIte == 3)
+			System.out.println("finish send over to worker " + i);
 		}
 	}
 
 	private volatile boolean monitorDispatchOver = false;
 	private volatile boolean monitorComputeOver = false;
+	
+	private Mailbox<Signal> monitor = new Mailbox<Signal>(2,2);
 
 	enum MonitorType {
 		dispatch_over_event, compute_over_event
 	}
 
 	class Monitor extends Task {
-		private int count = 0;
+		private int dispatch_counter = 0;
+		private int compute_counter = 0;
 
 		@Override
 		public void execute() throws Pausable {
 			Signal s = null;
 			while ((s = mailbox.get()) != null) {
 				if (s == Signal.DISPATCH_OVER) {
-					count++;
-					if (count == nworkers) {
-						count = 0;
-						monitorDispatchOver = true;
+					dispatch_counter++;
+					if (dispatch_counter == nworkers) {
+						dispatch_counter = 0;
+						monitor.put(Signal.MONITOR_DISPATCH_OVER);
 					}
 				} else if (s == Signal.COMPUTE_OVER) {
-					count++;
-					if (count == nworkers) {
-						count = 0;
-						monitorComputeOver = true;
+					compute_counter++;
+					if (compute_counter == nworkers) {
+						compute_counter = 0;
+						
+						monitor.put(Signal.MONITOR_COMPUTE_OVER);
+						if(currIte == 3){
+							System.out.println("Hello");
+						}
 					}
 				}
 			}
@@ -225,12 +230,13 @@ public class Manager<V, E, M> extends Task {
 	private void startWorkers() throws Pausable {
 		Worker.mc = mc;
 		Worker.MAXID = MAXID;
+		Worker.firstMsgOrNot = new BitSet(MAXID+1);
 		for (int i = 0; i < nworkers; i++) {
 			workers[i] = new Worker<V,E,M>(this, VTypeBytesToValueConverter,
 					ETypeBytesToValueConverter, MTypeBytesToValueConverter,
 					handler,endIte);
 			workers[i].start();
-			System.out.println("worker "+ i + " has already start....");
+//			System.out.println("worker "+ i + " has already start....");
 		}
 	}
 
@@ -255,6 +261,7 @@ public class Manager<V, E, M> extends Task {
 	}
 
 	public void setUpdate(int sequence) {
+//		System.out.println(sequence);
 		bits.set(sequence);
 		
 	}
@@ -269,7 +276,4 @@ public class Manager<V, E, M> extends Task {
 
 }
 
-enum Signal {
-	ITERATION_START, ITERATION_OVER, CHECK_STATE, CHECK_STATE_OVER, DISPATCH_OVER, COMPUTE_OVER, ITERATION_UNACTIVE, ITERATION_ACTIVE, OVER
 
-}
