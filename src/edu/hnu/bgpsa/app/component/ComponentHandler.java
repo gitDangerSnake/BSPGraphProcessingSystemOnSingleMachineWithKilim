@@ -12,7 +12,7 @@ public class ComponentHandler extends Handler<Integer,EmptyType,Integer>{
 	
 				@Override
 				public Message genMessage(int from, int to, Integer val, EmptyType weight,int outDegree) {
-					return new CompomentMessage(from,to,val);
+					return new CompomentMessage(to,val);
 				}
 	
 				@Override

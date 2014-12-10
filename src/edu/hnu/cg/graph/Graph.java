@@ -12,6 +12,7 @@ import java.io.FileOutputStream;
 import java.io.FileReader;
 import java.io.FileWriter;
 import java.io.IOException;
+import java.io.InputStreamReader;
 import java.util.Arrays;
 import java.util.StringTokenizer;
 import java.util.logging.Logger;
@@ -279,8 +280,7 @@ public class Graph<VertexValueType, EdgeValueType, MsgValueType> {
 			if(chronicleDataFile.exists()) chronicleDataFile.delete();
 			if(chronicleIndexFile.exists()) chronicleIndexFile.delete();
 			if(maxId.exists()) maxId.delete();
-			BufferedReader bReader = new BufferedReader(new FileReader(
-					(new File(graphFilename))));
+			BufferedReader bReader = new BufferedReader(new InputStreamReader(new FileInputStream(new File(graphFilename))));
 			String ln = null;
 			long lnNum = 0;
 			if (format.toLowerCase().equals("edgelist")) {
@@ -450,6 +450,7 @@ public class Graph<VertexValueType, EdgeValueType, MsgValueType> {
 					entry = new byte[outdegree*(4+sizeOfEdgeValue)];
 					int curstart = 0;
 					while(isstart < s){
+						
 						int to = Helper.getSecond(edges[isstart]);
 						if(to>MAXID) MAXID = to;
 						System.arraycopy(Helper.intToByteArray(to), 0, entry, curstart, 4);
@@ -457,20 +458,20 @@ public class Graph<VertexValueType, EdgeValueType, MsgValueType> {
 						System.arraycopy(edgeValues, isstart * sizeOfEdgeValue, entry, curstart, sizeOfEdgeValue);
 						curstart += sizeOfEdgeValue;
 						isstart++;
+						
 					}
 					while(currentSequence < curvid){
 						ch.write((byte)-1, 100);
 						currentSequence++;
 					}
+					
 					ch.write(entry, 100+entry.length);
 					currentSequence++;
 					curvid = from;
 					if(curvid > MAXID) MAXID = curvid;
 					
 				}
-			}
-			
-			if(s == edges.length-1 && curvid == from){
+			}else if(s == edges.length-1){
 				int outdegree = s -isstart + 1;
 				
 				entry = new byte[outdegree*(4+sizeOfEdgeValue)];
@@ -621,7 +622,7 @@ public class Graph<VertexValueType, EdgeValueType, MsgValueType> {
 
 		ChronicleHelper h = ChronicleHelper.newInstance();
 
-		
+		Object ob = h.read(637153);
 		for (int i = 0; i <= MAXID; i++) {
 			Object obj = h.read(i);
 			if (obj instanceof byte[]) {

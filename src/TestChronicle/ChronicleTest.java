@@ -1,15 +1,38 @@
 package TestChronicle;
 
 import edu.hnu.bgpsa.graph.framework.Signal;
+import edu.hnu.cg.graph.BytesToValueConverter.FloatConverter;
 import edu.hnu.cg.util.ChronicleHelper;
+import edu.hnu.cg.util.Helper;
 
 public class ChronicleTest {
 
 	public static void main(String[] args) {
-		for(int i=0;i<2048;i++){
-			new Reader(i).start();
-		}
+		byte[] parcel = new byte[8];
+		int to = 345;
+		byte[] v = Helper.intToByteArray(to);
+		float f = 3.14f;
+		byte[] fl = new byte[4];
+		new FloatConverter().setValue(fl, f	);
+		System.arraycopy(v, 0, parcel, 0, 4);
+		System.arraycopy(fl, 0, parcel, 4, 4);
+		
+		
+		
 	}
+	
+	public static long pack(int a, float b) {
+		return (long) (((long) a << 32) + b);
+	}
+
+	public static int getFirst(long e) {
+		return (int) (e >> 32);
+	}
+
+	public static int getSecond(long e) {
+		return (int) (e & 0x00000000ffffffffL);
+	}
+
 }
 
 class Reader extends Thread{

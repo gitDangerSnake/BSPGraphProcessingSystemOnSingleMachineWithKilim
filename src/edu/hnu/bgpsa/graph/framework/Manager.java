@@ -103,8 +103,8 @@ public class Manager<V, E, M> extends Task {
 		startWorkers();
 		new Monitor().start();
 		Signal s = null;
+		System.out.println("*************"+System.currentTimeMillis()+"*************");
 		while (currIte < endIte) {
-			
 			activeWorkers();
 			
 		
@@ -114,7 +114,6 @@ public class Manager<V, E, M> extends Task {
 			}
 			
 			interfer();
-			System.out.println("wait finish");
 			s = monitor.get();
 			System.out.println(s);
 			if(s == Signal.MONITOR_COMPUTE_OVER){
@@ -176,15 +175,13 @@ public class Manager<V, E, M> extends Task {
 
 	private void activeWorkers() throws Pausable {
 		for (int i = 0; i < nworkers; i++) {
-			workers[i].putSignal(Signal.ITERATION_START);
+			workers[i].putSignal(Signal.MANAGER_ITERATION_START);
 		}
 	}
 
 	private void interfer() throws Pausable {
 		for (int i = 0; i < nworkers; i++) {
-			workers[i].put(Signal.ITERATION_OVER);
-			if(currIte == 3)
-			System.out.println("finish send over to worker " + i);
+			workers[i].put(Signal.MANAGER_ITERATION_OVER);
 		}
 	}
 
@@ -205,13 +202,13 @@ public class Manager<V, E, M> extends Task {
 		public void execute() throws Pausable {
 			Signal s = null;
 			while ((s = mailbox.get()) != null) {
-				if (s == Signal.DISPATCH_OVER) {
+				if (s == Signal.WORKER_DISPATCH_OVER) {
 					dispatch_counter++;
 					if (dispatch_counter == nworkers) {
 						dispatch_counter = 0;
 						monitor.put(Signal.MONITOR_DISPATCH_OVER);
 					}
-				} else if (s == Signal.COMPUTE_OVER) {
+				} else if (s == Signal.WORKER_COMPUTE_OVER) {
 					compute_counter++;
 					if (compute_counter == nworkers) {
 						compute_counter = 0;

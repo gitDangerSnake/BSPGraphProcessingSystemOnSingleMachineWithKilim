@@ -105,13 +105,10 @@ public class Worker<V, E, M> extends Task {
 			Object msg = null;
 			V oldVal = null;
 			V newVal = null;
-			int lastTo = -1;
 
-			while (currentIte < endIte && computing) {
-//				if(currentIte == 3)
-//			System.out.println(wid+" is waiting computing message...");
+			while (computing) {
+
 				msg = mailbox.get();
-				// System.out.println("hello");
 				// 如果msg是计算消息则，
 				if (msg instanceof Message) {
 					int to = ((Message) msg).getTo();
@@ -155,9 +152,9 @@ public class Worker<V, E, M> extends Task {
 					
 
 				} else if ((msg instanceof Signal)
-						&& (msg == Signal.ITERATION_OVER)) { // 如果消息不是计算消息，则进行其他的对应操作
-					mgr.note(Signal.COMPUTE_OVER);
-				}else if((msg instanceof Signal) && (msg == Signal.COMPUTE_OVER)){
+						&& (msg == Signal.MANAGER_ITERATION_OVER)) { // 如果消息不是计算消息，则进行其他的对应操作
+					mgr.note(Signal.WORKER_COMPUTE_OVER);
+				}else if((msg instanceof Signal) && (msg == Signal.WORKER_COMPUTE_OVER)){
 					System.out.println("receive signal from my dispather...");
 					break;
 				}
@@ -166,7 +163,7 @@ public class Worker<V, E, M> extends Task {
 				newVal = null;
 			}
 			
-			mgr.note(Signal.COMPUTE_OVER);
+			mgr.note(Signal.WORKER_COMPUTE_OVER);
 			
 		}
 	}
@@ -179,26 +176,29 @@ public class Worker<V, E, M> extends Task {
 	public void execute() throws Pausable, IOException {
 		int esize = eTypeBytesToValueConverter == null ? 0 : eTypeBytesToValueConverter.sizeOf(); //edge value 占用多少字节
 		byte[] eTemp = new byte[esize];
-		
+		Message msg = null;
+		byte[] arr = null;
+		V val = null;
 		// 获取到顶点数据，根据内容进行消息分发
 		new ComputeWorker().start();
-		while (currentIte < endIte && computing) {
+		while (computing) {
 			Signal s = siganlMailbox.get();
 			
-			if (s == Signal.ITERATION_START) { //如果信号类型是开始迭代开始，则开始取数据，分发消息
+			if (s == Signal.MANAGER_ITERATION_START) { //如果信号类型是开始迭代开始，则开始取数据，分发消息
 				
 				while(hasMore()){ //如果本序列还有数据则继续取数据
 					if(!breakPoints.contains(sequence)){
 						
 						long valueOffset = vindex(sequence,0); //从内存映射文件中获取数据，并且获取的是PINGPANG 所指向的一列
-						V val = getValue(valueOffset);
+						val = getValue(valueOffset);
 						
 						if(currentIte == 0 || mgr.isUpdated(sequence)){ //只有在上一个超级步中，如果该值发生了改变才会发送更新到其他顶点 或者是第一个超级步
 							
-							byte[] arr = next();//从CSR 数据文件中获取当前sequence所对应的数据
+							arr = next();//从CSR 数据文件中获取当前sequence所对应的数据
 					
 							if(arr!=null){//如果arr不为空则，表示取数据成功，进行消息分发
 								int outdegree = arr.length/(4+esize); //计算出对应本sequence的顶点的出边度数
+								if(eTypeBytesToValueConverter == null)
 								for(int i=0;i<arr.length;i+=(4+esize)){ //逐个进行消息分发
 									
 									int vid = ((arr[i] & 0xff) << 24) + ((arr[i + 1] & 0xff) << 16) 
@@ -206,8 +206,6 @@ public class Worker<V, E, M> extends Task {
 									if(eTypeBytesToValueConverter!= null){
 										System.arraycopy(arr, i+4, eTemp, 0, esize);
 									}
-									
-									Message msg = null;
 									
 									//根据用户的需求生成消息
 									if(eTypeBytesToValueConverter!= null){
@@ -234,7 +232,7 @@ public class Worker<V, E, M> extends Task {
 				}//当不在hasMore的时候，表示在该迭代步骤内，本worker需要分发消息的数据已经处理完了，通知manager，告诉他分发完成的信号,并且重直sequence
 				
 				reset(); //重直sequence
-				mgr.note(Signal.DISPATCH_OVER);//通知manager分发完成
+				mgr.note(Signal.WORKER_DISPATCH_OVER);//通知manager分发完成
 				
 				
 				
@@ -271,7 +269,7 @@ public class Worker<V, E, M> extends Task {
 				currentIte++; //迭代+1
 		}
 		
-		mgr.note(Signal.DISPATCH_OVER);
+//		mgr.note(Signal.WORKER_DISPATCH_OVER);
 //		mailbox.put(Signal.COMPUTE_OVER);
 
 	}
@@ -362,7 +360,7 @@ public class Worker<V, E, M> extends Task {
 
 		reset();
 		// 通知manager 分发完成
-		mgr.note(Signal.DISPATCH_OVER);
+		mgr.note(Signal.WORKER_DISPATCH_OVER);
 		System.out.println(wid + " notify manager dispatch over");
 
 	}
